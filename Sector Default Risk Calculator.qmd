@@ -1,0 +1,1312 @@
+---
+title: "Sector merton calc"
+author: "MKShots"
+format: html
+editor: visual
+jupyter: python3
+---
+
+# Project Overview
+
+This project aims to develop a sector-level credit risk framework for companies listed on the Hong Kong Stock Exchange (HKEX) using a Merton-style structural default model.
+
+The framework begins by constructing a comprehensive universe of HKEX-listed equity securities using the official HKEX List of Securities. Each company is then enriched with market information from Yahoo Finance, including sector classification, market capitalization, stock price history, and financial statement data where available.
+
+The primary objective is to estimate sector-level credit risk by aggregating company-level information into sector-level inputs. Unlike traditional company-specific Merton models, this approach evaluates the overall financial health and default risk of an entire sector.
+
+### Methodology Overview
+
+The workflow consists of the following stages:
+
+1.  Universe Construction
+
+    -   Import the official HKEX securities list.
+
+    -   Filter to relevant listed equity securities.
+
+    -   Create Yahoo Finance-compatible ticker symbols.
+
+2.  Market Data Collection
+
+    -   Retrieve company sector classifications.
+
+    -   Retrieve market capitalization data.
+
+    -   Retrieve historical stock price data.
+
+3.  Financial Data Collection
+
+    -   Retrieve debt and balance sheet information.
+
+    -   Identify companies with sufficient information to support Merton model calculations.
+
+4.  Merton Eligibility Assessment
+
+    A company is considered Merton-eligible only if the required inputs are available:
+
+    -   Market capitalization
+
+    -   Debt information
+
+    -   Historical stock prices sufficient for volatility estimation
+
+5.  Sector Aggregation
+
+    -   Aggregate market capitalization and debt across all Merton-eligible companies within each sector.
+
+    -   Estimate sector-level equity volatility from historical stock return data.
+
+6.  Sector Credit Risk Estimation
+
+    -   Calculate Distance-to-Default (DD).
+
+    -   Calculate Probability of Default (PD).
+
+    -   Compare risk levels across sectors.
+
+### Sector-Level Merton Model Methodology
+
+The sector credit risk framework is based on the structural default model developed by Robert Merton (1974). The Merton model treats a company's equity as a call option on the firm's assets and estimates the likelihood that the firm's asset value will fall below its debt obligations at maturity.
+
+In this project, the traditional company-level Merton framework is extended to the sector level by aggregating market capitalization, debt, and volatility information across HKEX-listed companies within the same sector.
+
+The objective is to estimate:
+
+-   Sector Distance-to-Default (DD)
+
+-   Sector Probability of Default (PD)
+
+which provide a market-based measure of sector financial health and default risk.
+
+#### Traditional Merton Model
+
+The Distance-to-Default (DD) is defined as:
+
+DD = \[ln(V / D) + (r + 0.5σ²)T\] / (σ√T)
+
+where:
+
+-   V = Asset Value
+
+-   D = Debt Value
+
+-   r = Risk-Free Rate
+
+-   σ = Asset Volatility
+
+-   T = Time Horizon (typically 1 year)
+
+The Probability of Default (PD) is then calculated as:
+
+PD = N(-DD)
+
+where:
+
+-   N() is the cumulative standard normal distribution.
+
+Interpretation:
+
+-   Higher DD indicates lower default risk.
+
+-   Lower DD indicates higher default risk.
+
+-   Higher PD indicates a greater likelihood of financial distress.
+
+#### Sector-Level Adaptation
+
+Instead of applying the model to a single company, sector-level inputs are constructed using all Merton-eligible companies within a sector.
+
+For each sector:
+
+Sector Equity Value:
+
+E_sector = Σ Market Capitalization
+
+Sector Debt Value:
+
+D_sector = Σ Debt
+
+Sector Equity Volatility:
+
+σE_sector
+
+is estimated from historical stock prices of the constituent companies.
+
+The sector asset value and asset volatility are then estimated using the Merton framework and used to calculate sector-level Distance-to-Default and Probability of Default.
+
+#### Merton Eligibility Rules
+
+A company is included in the sector Merton calculations only if all required inputs are available:
+
+-   Market Capitalization
+
+-   Debt Information
+
+-   Historical Stock Prices
+
+Companies with missing debt data or insufficient price history are excluded from the Merton calculations.
+
+To maintain consistency:
+
+-   Excluded companies do not contribute market capitalization.
+
+-   Excluded companies do not contribute debt.
+
+-   Excluded companies do not contribute volatility.
+
+This ensures that all Merton inputs are calculated from the same set of companies.
+
+#### Coverage Metrics
+
+For transparency, both universes are retained:
+
+Full Sector Universe:
+
+-   All HKEX-listed equity securities within the sector.
+
+Merton Eligible Universe:
+
+-   Companies with complete Merton inputs.
+
+Coverage is calculated as:
+
+Coverage % = Merton Market Cap / Total Sector Market Cap
+
+This metric indicates how much of the sector is represented in the final Merton calculations and serves as an important quality measure for interpreting the reliability of each sector's risk estimates.
+
+### Treatment of Missing Data
+
+The HKEX equity universe serves as the reference universe for coverage calculations.
+
+Companies with missing debt information, insufficient price history, or other missing Merton inputs are excluded from the sector Merton calculations. To maintain consistency, these companies' market capitalizations are also excluded from the Merton aggregation process.
+
+However, the framework separately tracks:
+
+-   Total sector market capitalization
+
+-   Merton-eligible sector market capitalization
+
+-   Sector coverage percentage
+
+This provides transparency regarding how much of each sector is represented in the final credit risk calculations.
+
+### Key Outputs
+
+The framework generates:
+
+-   Sector-level market capitalization
+
+-   Sector-level debt estimates
+
+-   Equity volatility measures
+
+-   Distance-to-Default estimates
+
+-   Probability of Default estimates
+
+-   Coverage metrics indicating the proportion of each sector represented by the final Merton sample
+
+### Project Goal
+
+The ultimate objective is to create a scalable and transparent sector credit risk monitoring framework that can be extended to different markets, time periods, and risk assessment methodologies while maintaining reproducibility and data quality controls.
+
+## Phase 1: Workbook set-up
+
+### Environment configuration
+
+```{r}
+library(reticulate)
+py_config()
+```
+
+### Package Installation
+
+```{r}
+library(reticulate)
+py_install(c("yfinance", "pandas", "numpy", "openpyxl", "datetime", "pytz","IPython", "scipy", "jupyter", "ipykernel", "tqdm", "requests", "matplotlib", "seaborn", "pyarrow", "statsmodels", "tabulate"), pip = TRUE)
+```
+
+### Python Imports
+
+```{python}
+# Core Data Packages
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import pytz
+
+# Market Data
+import yfinance as yf
+
+# Merton Model
+from scipy.stats import norm
+from scipy.optimize import fsolve
+
+# Progress Tracking
+from tqdm import tqdm
+
+# Visualisation
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Utility
+import requests
+import warnings
+from IPython.display import display
+from pathlib import Path
+import os
+```
+
+Settings and helper functions
+
+```{python}
+#SETTINGS AND HELPER FUNCTIONS
+
+from pathlib import Path 
+import pandas as pd 
+import numpy as np 
+import yfinance as yf 
+from tqdm import tqdm 
+
+# Output folders (all nested inside "Sector analysis")
+
+ROOT_DIR = Path("Sector analysis")
+
+BASE_DIR = ROOT_DIR / "data"
+OUTPUT_DIR = ROOT_DIR / "output"
+
+# parents=True also creates the "Sector analysis" parent if it doesn't exist yet
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Model Settings
+
+PRICE_PERIOD = "5y" 
+MIN_PRICE_ROWS = 120 #reducing number of price rows to include large firms which are new but take up a lot of market share. Volatility calculation can still be done. 
+TRADING_DAYS = 252 
+# Set this to a number for testing, for example 100. 
+# Set to None when running the full HKEX equity universe. 
+SAMPLE_LIMIT = None 
+
+print("Phase 4 settings loaded.")
+```
+
+## Phase 2: HKEX Universe Construction
+
+### Downloading HKEX Securities List
+
+```{python}
+import pandas as pd 
+hkex_url = (
+  "https://www.hkex.com.hk/eng/services/trading/" 
+  "securities/securitieslists/" 
+  "ListOfSecurities.xlsx" 
+  ) 
+  hkex_raw = pd.read_excel( 
+    hkex_url,
+    header=2
+  )
+```
+
+### Review Security Classifications
+
+```{python}
+print(
+    hkex_raw["Category"]
+    .value_counts(
+        dropna=False
+    )
+)
+```
+
+View of the sub-category count of all the securities
+
+```{python}
+print(
+    hkex_raw["Sub-Category"]
+    .value_counts(
+        dropna=False
+    )
+)
+```
+
+### Filter to HKEX Equity Securities
+
+```{python}
+hkex_equities = ( 
+  hkex_raw[ 
+    hkex_raw["Category"] == "Equity" 
+  ] 
+    .copy() 
+) 
+
+print( 
+  f"Number of HKEX Equity Securities: {len(hkex_equities)}" 
+)
+```
+
+### Create Yahoo-Compatible Tickers
+
+```{python}
+hkex_equities["ticker"] = (
+    hkex_equities["Stock Code"]
+    .astype(str)
+    .str.zfill(4)
+    + ".HK"
+)
+```
+
+```{python}
+print(
+    hkex_equities[
+        [
+            "Stock Code",
+            "Name of Securities",
+            "ticker"
+        ]
+    ].head(20)
+)
+```
+
+### Inspect universe
+
+```{python}
+print( 
+  hkex_equities[ 
+    [ 
+      "Stock Code", 
+      "Name of Securities", 
+      "Category", 
+      "Sub-Category", 
+      "ticker" 
+      ] 
+    ].head(20) 
+)
+```
+
+Verify the universe contains Mainboard + GEM + Investment companies + Depositary Receipts + Trading-Only Securities.
+
+```{python}
+print( hkex_equities[ "Sub-Category" ].value_counts() )
+```
+
+Saving the snapshot of the universe to csv
+
+```{python}
+hkex_equities.to_csv(BASE_DIR / "hkex_equity_universe.csv", index=False )
+```
+
+## Phase 3: Unified Extraction Function
+
+```{python}
+# =====================================================
+# UNIFIED COMPANY EXTRACTION FUNCTION
+# =====================================================
+
+def get_latest_row_value(bs, row_name):
+    if row_name not in bs.index:
+        return None
+    series = pd.to_numeric(bs.loc[row_name], errors="coerce").dropna()
+    if series.empty:
+        return None
+    return series.iloc[0], series.index[0]
+
+
+def resolve_total_debt(bs):
+    direct = get_latest_row_value(bs, "Total Debt")
+    if direct is not None:
+        value, date = direct
+        if value > 0:
+            return value, date, "debt_available"
+        else:
+            return value, date, "zero_or_negative_debt"
+
+    long_term = get_latest_row_value(bs, "Long Term Debt")
+    current = get_latest_row_value(bs, "Current Debt")
+
+    if long_term is None and current is None:
+        return None, None, "missing_total_debt"
+
+    lt_value = long_term[0] if long_term is not None else 0.0
+    cur_value = current[0] if current is not None else 0.0
+    debt_date = long_term[1] if long_term is not None else current[1]
+
+    total = lt_value + cur_value
+    if total > 0:
+        return total, debt_date, "debt_available"
+    else:
+        return total, debt_date, "zero_or_negative_debt"
+
+
+def extract_company_data(ticker):
+    summary = {
+        "ticker": ticker,
+        "company_name": None,
+        "sector": None,
+        "industry": None,
+        "market_cap": None,
+        "country": None,
+        "currency": None,
+        "exchange": None,
+        "total_debt": None,
+        "debt_date": None,
+        "debt_status": None,
+        "price_rows": 0,
+        "price_status": None,
+    }
+    returns_df = None
+
+    try:
+        stock = yf.Ticker(ticker)
+
+        try:
+            info = stock.info
+        except Exception:
+            info = {}
+
+        if isinstance(info, dict) and len(info) > 0:
+            summary["company_name"] = info.get("longName") or info.get("shortName")
+            summary["sector"] = info.get("sector")
+            summary["industry"] = info.get("industry")
+            summary["market_cap"] = info.get("marketCap")
+            summary["country"] = info.get("country")
+            summary["currency"] = info.get("currency")
+            summary["exchange"] = info.get("exchange")
+
+        try:
+            bs = stock.balance_sheet
+            if bs is None or bs.empty:
+                summary["debt_status"] = "missing_balance_sheet"
+            else:
+                td, dd, ds = resolve_total_debt(bs)
+                summary["total_debt"] = td
+                summary["debt_date"] = dd
+                summary["debt_status"] = ds
+        except Exception as e:
+            summary["debt_status"] = f"debt_error: {str(e)}"
+
+        try:
+            prices = stock.history(period=PRICE_PERIOD, auto_adjust=True)
+            if prices is None or prices.empty:
+                summary["price_status"] = "missing_price_history"
+            elif "Close" not in prices.columns:
+                summary["price_status"] = "missing_close_price"
+            else:
+                prices = prices.reset_index()
+                prices = prices[["Date", "Close"]].copy()
+                prices["ticker"] = ticker
+                prices["daily_return"] = prices["Close"].pct_change()
+                prices = prices.dropna(subset=["daily_return"])
+                summary["price_rows"] = len(prices)
+                if len(prices) < MIN_PRICE_ROWS:
+                    summary["price_status"] = "insufficient_price_history"
+                else:
+                    summary["price_status"] = "price_available"
+                    returns_df = prices[["Date", "ticker", "daily_return"]]
+        except Exception as e:
+            summary["price_status"] = f"price_error: {str(e)}"
+
+    except Exception as e:
+        summary["debt_status"] = f"company_error: {str(e)}"
+        summary["price_status"] = f"company_error: {str(e)}"
+
+    return summary, returns_df
+```
+
+Tencent test:
+
+```{python}
+for tk in ["0700.HK", "0005.HK", "0001.HK", "0745.HK"]:
+    summary, rdf = extract_company_data(tk)
+    print(tk, "|", summary["debt_status"], "|", summary["total_debt"], "|", summary["price_status"])
+```
+
+Full extraction:
+
+```{python}
+import time 
+summary_records = [] 
+return_frames = [] 
+for ticker in tqdm(hkex_equities["ticker"]): 
+  summary, rdf = extract_company_data(ticker) 
+  summary_records.append(summary) 
+  if rdf is not None: 
+    return_frames.append(rdf) 
+  time.sleep(0.1) 
+  
+company_master = pd.DataFrame(summary_records) 
+
+if len(return_frames) > 0: 
+  company_returns = pd.concat(return_frames, ignore_index=True) 
+else: 
+  company_returns = pd.DataFrame(columns=["Date", "ticker", "daily_return"]) 
+
+print("Companies processed:", len(company_master)) 
+print("Return rows:", len(company_returns)) 
+print() 
+print(company_master["debt_status"].value_counts(dropna=False)) 
+print() 
+print(company_master["price_status"].value_counts(dropna=False))
+```
+
+Saving Checkpoint
+
+```{python}
+company_master.to_csv(BASE_DIR / "company_master.csv", index=False)
+company_returns.to_parquet(BASE_DIR / "company_daily_returns.parquet", index=False)
+print("Checkpoints saved.")
+```
+
+## Phase 4: Merton Eligibility Assessment and Sector Input Construction
+
+This phase evaluates whether each company in the HKEX equity universe contains the required inputs for the sector-level Merton model.
+
+The Merton model requires three key company-level inputs before a company can be included in the sector aggregation:
+
+-   Market capitalization
+
+-   Debt information
+
+-   Historical stock price data
+
+Companies that do not have all required inputs are excluded from the Merton calculation. However, they are still retained in the full universe so that sector coverage can be measured.
+
+This distinction is important because the project keeps two separate views of each sector:
+
+-   Full Sector Universe: All HKEX equity securities identified in the official HKEX securities list.
+
+-   Merton-Eligible Universe: Only companies with complete Merton inputs.
+
+For the actual Merton calculation, only Merton-eligible companies are used. This ensures that sector equity value, sector debt, and sector volatility are calculated from the same set of companies.
+
+The framework also calculates sector coverage:
+
+Coverage Percentage = Merton-Eligible Market Cap / Total Sector Market Cap
+
+This coverage metric helps assess how representative each sector-level Merton estimate is.
+
+### Merton Eligibility Classification
+
+This section combines the market capitalization, debt, and price history results to determine which companies are eligible for the sector-level Merton model.
+
+A company is Merton-eligible only if it has:
+
+-   Valid market capitalization
+
+-   Valid total debt
+
+-   Sufficient price history
+
+Companies that fail any requirement are excluded from the Merton calculation but remain in the full universe for coverage reporting.
+
+The eligibility result is later used to construct sector equity value, sector debt, and sector volatility from a consistent set of companies.
+
+```{python}
+# PHASE 4E: MERTON ELIGIBILITY CLASSIFICATION
+
+merton_base = company_master.copy()
+
+# has_sector now also rejects empty/whitespace strings
+merton_base["has_sector"] = (
+    merton_base["sector"].notna()
+    & (merton_base["sector"].astype("string").str.strip() != "")
+)
+
+def resolve_debt(row):
+    status = row["debt_status"]
+    if status == "debt_available":
+        return row["total_debt"]
+    if status == "zero_or_negative_debt":
+        return 0.0
+    return None
+
+merton_base["merton_debt"] = merton_base.apply(resolve_debt, axis=1)
+
+merton_base["has_market_cap"] = (
+    merton_base["market_cap"].notna()
+    & (merton_base["market_cap"] > 0)
+)
+
+merton_base["has_debt"] = merton_base["merton_debt"].notna()
+
+merton_base["has_price_history"] = merton_base["price_rows"] >= MIN_PRICE_ROWS
+
+merton_base["merton_eligible"] = (
+    merton_base["has_market_cap"]
+    & merton_base["has_debt"]
+    & merton_base["has_price_history"]
+    & merton_base["has_sector"]
+)
+
+# Strict filter: drop null AND empty/whitespace sectors before aggregation
+merton_base["sector"] = merton_base["sector"].astype("string").str.strip()
+
+merton_base = merton_base[
+    merton_base["sector"].notna()
+    & (merton_base["sector"] != "")
+].copy()
+
+print("Rows after dropping blank/null sectors:", len(merton_base))
+print("Distinct sectors:", merton_base["sector"].nunique())
+
+merton_base.to_csv(BASE_DIR / "merton_eligibility_universe.csv", index=False)
+
+print("Merton eligibility summary:")
+print(merton_base["merton_eligible"].value_counts())
+print()
+print("Eligibility by sector:")
+print(
+    merton_base
+    .groupby("sector")["merton_eligible"]
+    .agg(["count", "sum"])
+    .sort_values("count", ascending=False)
+)
+```
+
+### Sector Coverage Calculation
+
+```{python}
+# PHASE 4F: SECTOR COVERAGE CALCULATION
+
+total_sector_market_cap = ( 
+  merton_base 
+  .groupby("sector", as_index=False) 
+  .agg( 
+    total_companies=("ticker", "count"), 
+    total_sector_market_cap=("market_cap", "sum") 
+  ) 
+) 
+merton_sector_market_cap = ( 
+  merton_base[ 
+    merton_base["merton_eligible"] 
+  ] 
+  .groupby("sector", as_index=False) 
+  .agg( 
+    merton_eligible_companies=("ticker", "count"), 
+    merton_market_cap=("market_cap", "sum"), 
+    sector_total_debt=("merton_debt", "sum") 
+  ) 
+) 
+sector_coverage = ( 
+  total_sector_market_cap 
+  .merge( 
+    merton_sector_market_cap, 
+    on="sector", 
+    how="left" 
+  )
+) 
+sector_coverage["merton_eligible_companies"] = ( 
+  sector_coverage["merton_eligible_companies"] 
+  .fillna(0) 
+  .astype(int) 
+) 
+sector_coverage["merton_market_cap"] = ( 
+  sector_coverage["merton_market_cap"] 
+  .fillna(0) 
+) 
+sector_coverage["sector_total_debt"] = ( 
+  sector_coverage["sector_total_debt"] 
+  .fillna(0) 
+) 
+sector_coverage["coverage_pct"] = ( 
+  sector_coverage["merton_market_cap"] 
+  / 
+  sector_coverage["total_sector_market_cap"] 
+) 
+sector_coverage = ( 
+  sector_coverage 
+  .sort_values( 
+    "coverage_pct", 
+    ascending=False 
+  ) 
+) 
+sector_coverage.to_csv( 
+  OUTPUT_DIR / "sector_coverage_summary.csv", 
+  index=False 
+) 
+display(sector_coverage)
+
+```
+
+Low Coverage Diagnostics
+
+```{python}
+# DIAGNOSTIC: LOW COVERAGE INVESTIGATION
+
+COVERAGE_THRESHOLD = 0.80 
+low_coverage_sectors = ( 
+  sector_coverage[ 
+    sector_coverage["coverage_pct"] < COVERAGE_THRESHOLD 
+  ]["sector"] 
+  .tolist() 
+) 
+print("Sectors below coverage threshold:") 
+print(low_coverage_sectors) 
+print() 
+for sector_name in low_coverage_sectors: 
+  print("=" * 70) 
+  print(f"SECTOR: {sector_name}") 
+  print("=" * 70) 
+  sector_data = merton_base[ 
+    merton_base["sector"] == sector_name 
+  ] 
+  # Eligible vs ineligible market cap 
+  cap_split = ( 
+    sector_data 
+    .groupby("merton_eligible")["market_cap"] 
+    .sum() 
+  ) 
+  print() 
+  print("Eligible vs Ineligible Market Cap:") 
+  print(cap_split) 
+  
+  # Exclusion reason breakdown 
+  excluded = sector_data[ 
+    ~sector_data["merton_eligible"] 
+  ] 
+  print() 
+  print("Exclusion reasons (debt_status):") 
+  print( 
+    excluded["debt_status"] 
+    .value_counts(dropna=False) 
+  ) 
+  print() 
+  print("Exclusion reasons (price_status):") 
+  print( 
+    excluded["price_status"] 
+    .value_counts(dropna=False) 
+  ) 
+  # Largest excluded companies 
+  print() 
+  print("Largest excluded companies:") 
+  print( 
+    excluded 
+    .sort_values( 
+      "market_cap", 
+      ascending=False 
+    )[ 
+      [ 
+        "ticker", 
+        "company_name", 
+        "market_cap", 
+        "debt_status", 
+        "price_status", 
+        "price_rows" 
+      ] 
+    ] 
+    .head(10) 
+  ) 
+  
+  print()
+```
+
+### Per-company Merton Solver
+
+```{python}
+# PHASE 5A: RISK-FREE RATE  (moved to run BEFORE the per-company Merton blocks)
+RISK_FREE_TICKER = "^TNX"
+try:
+    tnx = yf.Ticker(RISK_FREE_TICKER)
+    tnx_hist = tnx.history(period="1y", auto_adjust=True)
+    risk_free_rate = float(tnx_hist["Close"].dropna().iloc[-1]) / 100.0
+except Exception as e:
+    print("Risk-free fetch failed, using fallback. Error:", e)
+    risk_free_rate = 0.04
+print("Risk-free rate used:", risk_free_rate)
+
+# bridge to the names the Merton blocks expect
+RISK_FREE_RATE = risk_free_rate
+TIME_HORIZON   = 1.0   # 1 year — must match the T used in your input-aggregation Merton
+```
+
+```{python}
+import numpy as np
+import pandas as pd
+from scipy.optimize import fsolve
+from scipy.stats import norm
+
+def merton_company_pd(E, sigma_E, D, r=RISK_FREE_RATE, T=TIME_HORIZON):
+    """
+    Solve the Merton model for a single company.
+    E       = equity value (market cap)
+    sigma_E = equity volatility
+    D       = face value of debt
+    Returns asset value, asset vol, distance-to-default, PD, solver status.
+    """
+    if (not np.all(np.isfinite([E, sigma_E, D]))
+            or E <= 0 or D <= 0 or sigma_E <= 0):
+        return dict(asset_value=np.nan, asset_vol=np.nan, dd=np.nan,
+                    pd=np.nan, ier=-1, msg="invalid inputs")
+
+    def equations(x):
+        V, sigma_V = x
+        if V <= 0 or sigma_V <= 0:
+            return [1e6, 1e6]
+        d1 = (np.log(V / D) + (r + 0.5 * sigma_V**2) * T) / (sigma_V * np.sqrt(T))
+        d2 = d1 - sigma_V * np.sqrt(T)
+        eq1 = V * norm.cdf(d1) - D * np.exp(-r * T) * norm.cdf(d2) - E
+        eq2 = sigma_V * V * norm.cdf(d1) - sigma_E * E
+        return [eq1, eq2]
+
+    V0 = E + D
+    sigma_V0 = sigma_E * E / (E + D)
+    sol, info, ier, msg = fsolve(equations, [V0, sigma_V0], full_output=True)
+    V, sigma_V = sol
+
+    if ier != 1 or V <= 0 or sigma_V <= 0:
+        return dict(asset_value=V, asset_vol=sigma_V, dd=np.nan,
+                    pd=np.nan, ier=ier, msg=msg)
+
+    dd = (np.log(V / D) + (r - 0.5 * sigma_V**2) * T) / (sigma_V * np.sqrt(T))
+    pd_value = norm.cdf(-dd)
+    return dict(asset_value=V, asset_vol=sigma_V, dd=dd,
+                pd=pd_value, ier=ier, msg=msg)
+```
+
+```{python}
+# PER-COMPANY EQUITY VOLATILITY  (needed by the per-company Merton loop)
+
+# clean implausible daily returns first (same rule as 4G, idempotent)
+RETURN_CAP = 0.50
+company_returns = company_returns[
+    company_returns["daily_return"].abs() <= RETURN_CAP
+].copy()
+
+# annualized volatility per company from daily returns
+company_volatility = (
+    company_returns.groupby("ticker")["daily_return"]
+    .std()
+    .mul(np.sqrt(TRADING_DAYS))
+    .rename("equity_volatility")
+    .reset_index()
+)
+
+# attach to merton_base so the loop can read row.equity_volatility
+merton_base = merton_base.merge(company_volatility, on="ticker", how="left")
+
+print("Companies with a volatility value:",
+      merton_base["equity_volatility"].notna().sum())
+```
+
+```{python}
+company_pd_records = []
+for row in merton_base[merton_base["merton_eligible"]].itertuples(index=False):
+    res = merton_company_pd(
+        E=row.market_cap,
+        sigma_E=row.equity_volatility,
+        D=row.merton_debt,
+    )
+    company_pd_records.append({
+        "ticker": row.ticker,
+        "sector": row.sector,
+        "market_cap": row.market_cap,
+        "company_pd": res["pd"],
+        "company_dd": res["dd"],
+        "company_ier": res["ier"],
+    })
+
+company_pd = pd.DataFrame(company_pd_records)
+print("company_pd rows:", len(company_pd),
+      "| valid PDs:", company_pd["company_pd"].notna().sum())
+```
+
+```{python}
+# keep only companies with a finite, valid PD
+valid = company_pd[company_pd["company_pd"].notna()].copy()
+
+# renormalize market-cap weights within each sector over valid firms only
+valid["sector_mktcap_valid"] = valid.groupby("sector")["market_cap"].transform("sum")
+valid["weight"] = valid["market_cap"] / valid["sector_mktcap_valid"]
+valid["weighted_pd_contrib"] = valid["weight"] * valid["company_pd"]
+
+sector_weighted = (
+    valid.groupby("sector")
+    .agg(
+        weighted_avg_pd=("weighted_pd_contrib", "sum"),
+        n_companies_pd=("company_pd", "size"),
+    )
+    .reset_index()
+)
+```
+
+```{python}
+def classify_risk(pd_value):
+    if pd_value is None or pd.isna(pd_value):
+        return "Not Available"
+    if pd_value < 0.001:
+        return "Very Low"
+    if pd_value < 0.005:
+        return "Low"
+    if pd_value < 0.02:
+        return "Moderate"
+    if pd_value < 0.05:
+        return "Elevated"
+    return "High"
+
+sector_weighted["weighted_avg_risk"] = sector_weighted["weighted_avg_pd"].apply(classify_risk)
+```
+
+### Sector Portfolio Return Construction
+
+Sector equity volatility is estimated using a market-cap-weighted sector portfolio. Each sector is treated as a single portfolio of its Merton-eligible companies. Company weights are based on market capitalization, daily company returns are weighted accordingly, and the weighted returns are summed to produce a daily sector return series.
+
+```{python}
+# PHASE 4G: SECTOR PORTFOLIO RETURNS
+
+# --- Clean implausible daily returns (data errors) ---
+RETURN_CAP = 0.50  # drop single-day moves beyond +/-50%
+
+before = len(company_returns)
+company_returns = company_returns[
+    company_returns["daily_return"].abs() <= RETURN_CAP
+].copy()
+print(f"Removed {before - len(company_returns)} extreme daily returns.")
+
+# --- Build eligible companies and weights ---
+eligible_companies = (
+    merton_base[merton_base["merton_eligible"]]
+    [["ticker", "sector", "market_cap"]]
+    .copy()
+)
+
+eligible_companies["sector_mcap_total"] = (
+    eligible_companies
+    .groupby("sector")["market_cap"]
+    .transform("sum")
+)
+
+eligible_companies["sector_weight"] = (
+    eligible_companies["market_cap"]
+    / eligible_companies["sector_mcap_total"]
+)
+
+returns_weighted = company_returns.merge(
+    eligible_companies[["ticker", "sector", "sector_weight"]],
+    on="ticker",
+    how="inner"
+)
+
+returns_weighted["weighted_return"] = (
+    returns_weighted["daily_return"]
+    * returns_weighted["sector_weight"]
+)
+
+sector_daily_returns = (
+    returns_weighted
+    .groupby(["sector", "Date"], as_index=False)
+    .agg(sector_daily_return=("weighted_return", "sum"))
+)
+
+sector_daily_returns.to_parquet(
+    BASE_DIR / "sector_daily_returns.parquet",
+    index=False
+)
+
+print("Sector daily returns built.")
+print(sector_daily_returns.head())
+```
+
+### Sector Equity Volatility
+
+```{python}
+# PHASE 4H: SECTOR EQUITY VOLATILITY
+
+sector_volatility = (
+    sector_daily_returns
+    .groupby("sector", as_index=False)
+    .agg(
+        daily_volatility=("sector_daily_return", "std"),
+        return_observations=("sector_daily_return", "count")
+    )
+)
+
+sector_volatility["sector_equity_volatility"] = (
+    sector_volatility["daily_volatility"]
+    * np.sqrt(TRADING_DAYS)
+)
+
+sector_volatility.to_csv(
+    OUTPUT_DIR / "sector_equity_volatility.csv",
+    index=False
+)
+
+display(
+    sector_volatility.sort_values(
+        "sector_equity_volatility",
+        ascending=False
+    )
+)
+```
+
+### Final Sector Merton Inputs
+
+```{python}
+# PHASE 4I: FINAL SECTOR MERTON INPUTS 
+sector_merton_inputs = ( 
+  sector_coverage 
+  .merge( 
+    sector_volatility[ 
+      ["sector", "sector_equity_volatility", "return_observations"] 
+    ], 
+    on="sector", 
+    how="left" 
+  ) 
+) 
+sector_merton_inputs = sector_merton_inputs.rename( 
+  columns={ 
+    "merton_market_cap": "sector_equity_value", 
+    "sector_total_debt": "sector_debt" 
+  }
+) 
+sector_merton_inputs = sector_merton_inputs[ 
+  [ 
+    "sector", 
+    "total_companies", 
+    "merton_eligible_companies", 
+    "total_sector_market_cap", 
+    "sector_equity_value", 
+    "sector_debt", 
+    "coverage_pct", 
+    "sector_equity_volatility", 
+    "return_observations" 
+  ] 
+] 
+sector_merton_inputs.to_csv( 
+  OUTPUT_DIR / "sector_merton_inputs.csv", 
+  index=False 
+) 
+display( 
+  sector_merton_inputs.sort_values( 
+    "sector_equity_value", 
+    ascending=False 
+  )
+)
+```
+
+## Phase 5: Risk-Free Rate and Sector Merton Model
+
+his is the actual Merton solve. Two parts: get the risk-free rate, then solve for asset value and asset volatility, then compute DD and PD.
+
+MARKDOWN:
+
+### Phase 5: Sector Merton Model
+
+For each sector, the Merton model solves for the implied asset value and asset volatility given the sector equity value, sector debt, equity volatility, and risk-free rate. The two-equation system is:
+
+E = V·N(d1) − K·e\^(−rT)·N(d2)
+
+σE·E = V·N(d1)·σV
+
+Distance-to-Default and Probability of Default are then computed from the solved asset value and asset volatility.
+
+Sector Merton Solve
+
+```{python}
+# PHASE 5B: SECTOR MERTON SOLVE
+
+from scipy.stats import norm
+from scipy.optimize import fsolve
+
+T = 1.0
+
+def merton_equations(unknowns, E, K, sigma_E, r, T):
+    V, sigma_V = unknowns
+
+    if V <= 0 or sigma_V <= 0:
+        return [1e6, 1e6]
+
+    d1 = (np.log(V / K) + (r + 0.5 * sigma_V**2) * T) / (sigma_V * np.sqrt(T))
+    d2 = d1 - sigma_V * np.sqrt(T)
+
+    eq1 = V * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2) - E
+    eq2 = V * norm.cdf(d1) * sigma_V - E * sigma_E
+
+    return [eq1, eq2]
+
+
+def solve_sector_merton(E, K, sigma_E, r, T=1.0):
+    V0 = E + K
+    sigma_V0 = sigma_E * E / (E + K)
+
+    try:
+        solution, info, ier, msg = fsolve(
+            merton_equations,
+            [V0, sigma_V0],
+            args=(E, K, sigma_E, r, T),
+            full_output=True
+        )
+
+        V, sigma_V = solution
+
+        if ier != 1 or V <= 0 or sigma_V <= 0:
+            return None
+
+        dd = (np.log(V / K) + (r - 0.5 * sigma_V**2) * T) / (sigma_V * np.sqrt(T))
+        pd_value = norm.cdf(-dd)
+
+        return {
+            "asset_value": V,
+            "asset_volatility": sigma_V,
+            "distance_to_default": dd,
+            "probability_of_default": pd_value,
+            "solver_status": "converged"
+        }
+
+    except Exception as e:
+        return None
+
+
+results = []
+
+for row in sector_merton_inputs.itertuples(index=False):
+
+    E = row.sector_equity_value
+    K = row.sector_debt
+    sigma_E = row.sector_equity_volatility
+
+    record = {
+        "sector": row.sector,
+        "sector_equity_value": E,
+        "sector_debt": K,
+        "sector_equity_volatility": sigma_E,
+        "coverage_pct": row.coverage_pct
+    }
+
+    if K is None or K <= 0:
+        record.update({
+            "asset_value": E,
+            "asset_volatility": sigma_E,
+            "distance_to_default": np.inf,
+            "probability_of_default": 0.0,
+            "solver_status": "zero_debt"
+        })
+    else:
+        solved = solve_sector_merton(E, K, sigma_E, risk_free_rate, T)
+        if solved is None:
+            record.update({
+                "asset_value": None,
+                "asset_volatility": None,
+                "distance_to_default": None,
+                "probability_of_default": None,
+                "solver_status": "failed"
+            })
+        else:
+            record.update(solved)
+
+    results.append(record)
+
+sector_merton_results = pd.DataFrame(results)
+
+sector_merton_results.to_csv(
+    OUTPUT_DIR / "sector_merton_results.csv",
+    index=False
+)
+
+display(
+    sector_merton_results.sort_values(
+        "distance_to_default",
+        ascending=True
+    )
+)
+```
+
+## Phase 6 — Sector Default Risk Summary Report
+
+This section produces the final summary report. For each sector it presents the estimated default risk (Distance-to-Default and Probability of Default) alongside the data quality context: the total number of companies in the sector universe, the number of Merton-eligible companies used in the calculation, and the market-cap coverage achieved. A risk band is also assigned to make the results easier to interpret at a glance.
+
+```{python}
+# PHASE 6: SECTOR DEFAULT RISK SUMMARY REPORT
+
+summary_report = (
+    sector_merton_results
+    .merge(
+        sector_merton_inputs[
+            ["sector", "total_companies",
+             "merton_eligible_companies", "total_sector_market_cap"]
+        ],
+        on="sector", how="left"
+    )
+    .merge(  # bring in the value-weighted PD view
+        sector_weighted[["sector", "weighted_avg_pd", "weighted_avg_risk"]],
+        on="sector", how="left"
+    )
+)
+
+summary_report["pd_pct"] = summary_report["probability_of_default"] * 100
+
+def risk_band(pd_value):
+    if pd_value is None or pd.isna(pd_value):
+        return "Not Available"
+    if pd_value < 0.001:
+        return "Very Low"
+    if pd_value < 0.005:
+        return "Low"
+    if pd_value < 0.02:
+        return "Moderate"
+    if pd_value < 0.05:
+        return "Elevated"
+    return "High"
+
+summary_report["risk_band"] = summary_report["probability_of_default"].apply(risk_band)
+
+# coverage_pct left as a 0-1 decimal (NO *100), weighted cols placed after solver_status
+summary_report = summary_report[
+    [
+        "sector",
+        "total_companies",
+        "merton_eligible_companies",
+        "coverage_pct",
+        "sector_equity_value",
+        "sector_debt",
+        "sector_equity_volatility",
+        "distance_to_default",
+        "pd_pct",
+        "risk_band",
+        "solver_status",
+        "weighted_avg_pd",
+        "weighted_avg_risk"
+    ]
+].rename(columns={"pd_pct": "probability_of_default_pct"})
+
+summary_report = summary_report.sort_values(
+    "probability_of_default_pct", ascending=False
+)
+
+summary_report.to_csv(
+    OUTPUT_DIR / "sector_default_risk_summary.csv",
+    index=False
+)
+
+display(summary_report)
+```
+
+```{python}
+# DIAGNOSTIC: extreme returns inside Consumer Cyclical
+
+cc_tickers = merton_base[
+    (merton_base["sector"] == "Consumer Cyclical")
+    & (merton_base["merton_eligible"])
+]["ticker"]
+
+cc_returns = company_returns[company_returns["ticker"].isin(cc_tickers)]
+
+# Largest single-day moves
+print("Most extreme daily returns:")
+print(
+    cc_returns.reindex(
+        cc_returns["daily_return"].abs().sort_values(ascending=False).index
+    ).head(20)
+)
+
+# Per-company annualized vol
+per_company_vol = (
+    cc_returns.groupby("ticker")["daily_return"]
+    .std()
+    .mul(np.sqrt(TRADING_DAYS))
+    .sort_values(ascending=False)
+)
+
+print()
+print("Highest-volatility companies in Consumer Cyclical:")
+print(per_company_vol.head(15))
+```
